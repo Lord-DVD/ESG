@@ -1,0 +1,601 @@
+---
+title: "Project 2: ACMA830"
+subtitle: "Economic Scenario Generator"
+author: "Vatsal Desai | vatsal_desai@sfu.ca"
+date: "`r format(Sys.time(), '%B %d %Y')`"
+abstract: "This report tries to propose a simple economic scenario generator encomappsing most basic economic parameters, focusing mainly on long term economic outcomes. It focuses on follwing most stylized facts about a comprehensive ESG, and an explainable cascasding structure"
+output:
+  html_document: 
+    fig_caption: yes
+    keep_md: yes
+    df_print: kable
+    toc: yes
+  pdf_document: 
+    toc: yes
+---
+```{r setup, include=FALSE}
+setwd("D:/Academia/SFU/Fall 2022/ACMA830/Project_2")
+library(markdown)
+library(commonmark)
+library(details)
+library(htmlTable)
+library(rmarkdown)
+library(knitr)
+library(latex2exp)
+library(latexpdf)
+library(tinytex)
+library(xtable)
+library(TeXCheckR)
+library(utf8)
+library(boot)
+library(bslib)
+library(readr)
+library(tinytex)
+library(ggplot2)
+library(ggfortify)
+library(class)
+library(caret)
+library(rpart)
+library(dplyr)
+library(NbClust)
+library(cluster)
+library(rattle)
+library(rpart)
+library(rpart.plot)
+library(DiagrammeR)
+library(plotfunctions)
+```
+  
+\newpage  
+  
+# Introduction  
+  
+An Economic Scenario Generator(ESG) is a software tool that simulates future paths of economic and financial markets. This kind of analysis with stochastic distribution of possible outcomes allows us to look at unexpected yet plausible situations and estimate our exposure to future risk at various tolerance levels under such circumstances.  
+  
+An economic scenario generator is a software used to produce simulations of the joint behavior of financial markets and economic variables. It has mainly two kind of use cases:  
+  
+* Risk Neutral valuation for pricing complex financial derivatives and insurance contracts with embedded options
+* Enterprise risk management for calculating business risk, regulatory requirements and rating agency requirements  
+  
+Essential features of a comprehensive ESG would include the ability to simulate financial variables which reflect a relevant view of the economy to a certain extent. But doing this is always a trade-off between simplicity of implementation and understanding vs model complexity and sensitivity to economic factors.  
+  
+Considering all these, some of the stylized facts about a comprehensive ESG would include:  
+  
+* Yields for longer-maturity bonds tend to be greater than yields for shorter-maturity bonds.  
+* Yield curve inversion is only temporary and doesn't last for very long  
+* Interest rates can be negative  
+* Equity securities exhibit both higher expected volatility and higher expected return than fixed-income instruments  
+* The volatility of equity returns fluctuates significantly over time  
+* Correlations between modeled economic and financial market variables are not stable over time and can depend on whether monthly, quarterly or annual observations are being used.  
+  
+\newpage  
+  
+# Cascade Structure  
+  
+Just like Wilkie and Ahlgrim *et al*., to capture some of the dependency within model variables, this version of ESG follows a cascade structure, where each variable either depends on last variable or is directly correlated to it.  
+  
+For this ESG, we have considered inflation to be the primary driver of all other economic variables, assuming inflation is the inherent nature of the economic structures that we work in.  
+  
+![Cascade Structure of the ESG](Cascade_structure.jpg)  
+  
+
+```{r, eval=FALSE, fig.cap="Cascade Structure of the ESG"}
+grViz("
+digraph dot {
+
+graph [layout = dot]
+
+node [shape = rectangle]
+
+node []
+Inflation Short_rate Long_rate Dividend_Yield Equity_Yield
+
+edge [arrowhead = normal]
+Inflation -> {Short_rate Equity_Yield Dividend_Yield}
+Short_rate -> {Long_rate Equity_Yield}
+}")
+```
+  
+\newpage  
+  
+# Inflation Model  
+  
+Just like the CAS-SOA(ahlgrim 2005) model, we are using an Ornstein-Uhlenbecl process to model inflation.  
+  
+$$
+dq_t = \kappa_q(\theta_q - q_t)dt + \sigma_qdW_t^{(q)}
+$$  
+  
+Which can be discretized as:  
+  
+$$
+q_{t+1} = q_t + \kappa_q(\theta_q - q_t)\Delta t + \sigma_q\sqrt{\Delta t}\mathcal{Z}_q
+$$  
+  
+Where $\mathcal{Z}_q \sim \mathcal{N}(0,1),\;\kappa_q$is the speed of mean reversion to the long term mean level of inflation, which is denoted by $\theta_q$, $\sigma_q$ is the standard deviation of inflation and $\Delta t$ is the time interval between two consecutive observations.  
+  
+# Interest rate model  
+  
+Here unless specified otherwise, when we mention interest rate, we mean short term rate. To model long term rates, we are assuming long-term rates as a linear function of short term rates(since we assume yield curve inversions are temporary, and we want to use ESG for long term applications).  
+  
+To model short term interest rate, we have used a mean reverting stochastic equation described by the Vasicek model, as:  
+  
+$$
+dr_t = \kappa_r(\theta_r-r_t)dt + \sigma_rdW_t^{(r)}
+$$  
+  
+Where $Corr[W_t^{(q)},W_t^{(r)}] = \rho_{qr}$.  
+  
+This can be discretized as:  
+  
+$$
+r_{t+1} = r_t + \kappa_r(\theta_r-r_t)\Delta t + \sigma_r\sqrt{\Delta t}(\rho_{qr}\mathcal{Z}_q + \sqrt{1-\rho_{qr}^2}\mathcal{Z}_r)
+$$  
+  
+Where $\mathcal{Z}_r \sim \mathcal{N}(0,1)$, $\kappa_r$ is the speed of mean reversion to the mean short rate level $\theta_r$, $\Delta t$ is the time difference between two consecutive observations and $\mathcal{Z}_q$ is the normal variate from our inflation process.  
+  
+From this, we get our long-term interest rates as:  
+  
+$$
+l_t = mr_t + c + \epsilon_t
+$$  
+  
+Where $m$ and $c$ are regression co-efficients and $\epsilon_t$ are normal error terms.(residuals).  
+  
+# Dividend Yields Model  
+  
+Similar to Wilkie(1986) and CAS-SOA(2005) model, we assume that log of dividend yields follows an autoregressive process, such as:  
+  
+$$
+d(log\;y_t) = \kappa_y(\theta_y - log\;y_t)dt + \sigma_ydW_t^{(y)}
+$$  
+  
+Where $Corr[W_t^{(q)},W_t^{(y)}] = \rho_{qy}$.  
+  
+This can be discretized as:  
+  
+$$
+log\;y_{t+1} = log\;y_t + \kappa_y(\theta_y-log\;y_t)\Delta t + \sigma_y\sqrt{\Delta t}(\rho_{qy}\mathcal{Z}_q + \sqrt{1-\rho_{qy}^2}\mathcal{Z}_y)
+$$  
+  
+Where $\mathcal{Z}_y \sim \mathcal{N}(0,1)$, $\kappa_y$ is the speed of mean reversion to the mean dividend yield $\theta_y$, $\Delta t$ is the time difference between two consecutive observations and $\mathcal{Z}_q$ is the normal variate from our inflation process.  
+  
+# Equity Yields Model  
+  
+To model equity yields, I am using a Regime switching model like CAS-SOA version. Which is a RSLN(2) model. For the model we have derived probabilities and $\mu,\sigma$ values directly from the dataset.  
+  
+RSLN(2) model as investigated by Hardy(2001) is given by:  
+  
+$$
+\begin{aligned}
+X_{t_i} &= \mu_{t_i} + \sigma_{t_i}\mathcal{Z}_{t_i} \\
+Where,\;X_{t_i}&=log\left[\frac{S_{t_i}}{S_{t-1_i}}\right]
+\end{aligned}
+$$  
+  
+Which then gets used by the model as:  
+  
+$$
+\begin{aligned}
+y_t = q_t + r_t + X_t
+\end{aligned}
+$$  
+  
+\newpage  
+  
+# Parameter Estimation  
+  
+For a general Ornstein-Uhlenbeck process denoted as:  
+  
+$$
+dX_t = \kappa(\theta-X_t)dt + \sigma dW_t
+$$  
+  
+Assume that we have a series of observations $X = \{X_0,X_1,X_2,\ldots,X_n\}$ containing n+1 observations, with equidistance time partition $\Delta t = t_i - t_{i-1}, \forall i \in \{1,2,\ldots,n-1\}$, we know that expected value of $X_t$ is:  
+  
+$$
+\mathbb{E}[X_t] = X_{t-1}e^{-\kappa\Delta t} + \theta(1 - e^{-\kappa\Delta t})
+$$  
+  
+And its variance is given by:  
+  
+$$
+Var[X_t] = \frac{\sigma^2}{2\kappa}(1 - e^{-2\kappa\Delta t})
+$$  
+  
+Then, the log-likelihood function$L(\Theta)$, can be given by:  
+  
+$$
+\begin{aligned}
+L(\Theta) = L(\kappa,\theta,\sigma^2) &= \frac{-n}{2}log\left[\frac{\sigma^2}{2\kappa}(1 - e^{-2\kappa\Delta t})\right] - \frac{n}{2}log2\pi \\
+&- \frac{\kappa}{\sigma^2(1 - e^{-2\kappa\Delta t})}\sum_{i=1}^n\left[X_t-X_{t-1}e^{-\kappa\Delta t} - \theta(1 - e^{-\kappa\Delta t})\right]^2
+\end{aligned}
+$$  
+  
+Setting its first derivative equal to zero, and solving for each parameter, we get parameter estimates as:  
+  
+$$
+\begin{aligned}
+\hat{\kappa} &= \frac{-1}{\Delta t}log\left[\frac{n\sum_{i=1}^n X_iX_{i-1} - \sum_{i=1}^nX_i\sum_{i=1}^nX_{i-1}}{n\sum_{i=1}^n X_{i-1}^2 - \left(\sum_{i=1}^nX_{i-1}\right)^2}\right] \\
+\hat{\theta} &= \frac{1}{n(1-e^{-\hat{\kappa}\Delta t})}\left[\sum_{i=1}^nX_i - e^{\hat{\kappa}\Delta t}\sum_{i=1}^nX_{i-1}\right] \\
+\hat{\sigma}^2 &= \frac{2\hat{\kappa}}{n(1-e^{-2\hat{\kappa}\Delta t})}\sum_{i=1}^n\left[X_i-X_{i-1}e^{-\hat{\kappa}\Delta t} - \hat{\theta}(1-e^{-\hat{\kappa}\Delta t})\right]^2
+\end{aligned}
+$$  
+  
+\newpage  
+  
+# Empirical Evidence  
+  
+Most of the data used in this paper came from the file provided along with project prompt. Apart from which, I have used FED fund rate as an substitute for short-rate(considering mostly those are equivalent). The data included annual average numbers for Inflation, Short-term Interest rates, Long-term Interest Rates, S&P500 Equity Index Yields and S&P500 Equity Dividend Yields for the period of 1946-2016.  
+  
+```{r include=FALSE}
+# Importing the original data
+data <- read.csv("Original_data.csv")
+Inflation <- data$Inflation
+Short_rate <- data$Short_rate
+Dividend_yield <- data$Dividend_Yield
+Equity_yield <- data$Equity_Yield
+Long_rate <- data$Long_Rate
+SP500 <- data$SP500
+VIX <- data$VIX[45:71]
+```
+  
+```{r include=FALSE}
+#Calculating the optimized parameters
+parameter_estimator <- function(X,dt){
+  
+  X0 <- X[-length(X)]
+  X1 <- move_n_point(X,n=-1)
+  X1 <- X1[-length(X1)]
+  
+  dt <- dt
+  n <- as.numeric(length(X0))
+  
+  s0 <- sum(X0)
+  s1 <- sum(X1)
+  s00 <- sum(X0^2)
+  s01 <- sum(X0*X1)
+  
+  k_hat <- -1*log(((n*s01)-(s0*s1))/((n*s00)-(s0*s0)))
+  t_hat <- (1/n*(1-exp(-1*k_hat)))*(s1-(exp(k_hat)*s0))
+  weird_term <- X1 - (X0*exp(-1*k_hat)) -(t_hat*(1-exp(-1*k_hat)))
+  s_hat <- ((2*k_hat)/(n*(1-exp(-2*k_hat))))*(sum((weird_term)^2))
+  
+  return(c(k_hat,t_hat,sqrt(s_hat)))
+}
+```
+  
+```{r include=FALSE}
+# Inflation Process
+inflation_process <- function(q0,k_q,t_q,s_q,dt,Nsteps){
+  set.seed(1)
+  q <- numeric()
+  Z_q <- rnorm(Nsteps,0,1)
+  q[1] <- q0
+  for(i in 1:Nsteps){
+    q[i+1] <- q[i] + k_q*(t_q - q[i])*dt + 0.5*s_q*sqrt(dt)*Z_q[i]
+  }
+  return(q)
+}
+```
+  
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Real vs Fitted Inflation(Blue: Real, Red:Predicted)"}
+#Estimating parameters for Inflation Process
+#dt=1 for yearly inflation, putting mean(X)=theta as choosing it as free parameter
+#and using other values as minimized by likelihood
+inflation_parameters <- parameter_estimator(Inflation,1)
+pred_q <- inflation_process(Inflation[1],inflation_parameters[1], 
+                            mean(Inflation),inflation_parameters[3],1,70)
+
+#plotting fitted curve to actual data
+plot(Inflation~data$Year,col="blue", type="l", 
+     main="Real vs Fitted Inflation", xlab="Year")
+lines(pred_q~data$Year,col="red")
+```
+  
+As we can see from the graph, the fitted values may miss out on extreme events instantaneously, but it still does follow the general path of historical inflation.  
+  
+\newpage  
+  
+```{r include=FALSE}
+#Short_rate Process
+Rate_process <- function(r0,k_r,t_r,s_r,rho_qr,dt,Nsteps){
+  set.seed(1)
+  Z_q <- rnorm(Nsteps,0,1)
+  Z_r <- rho_qr*Z_q + sqrt(1-rho_qr^2)*rnorm(Nsteps,0,1)
+  r <- numeric()
+  r[1] <- r0
+  for(i in 1:Nsteps){
+    r[i+1] <- r[i] + k_r*(t_r - r[i])*dt + 0.5*s_r*sqrt(dt)*Z_r[i]
+  }
+  return(r)
+}
+```
+  
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Real vs Fitted Long-term interest rates(Blue: Real, Red:Predicted)"}
+#Estimating parameters of short rate process
+#dt=1 for annual observations, theta=mean(short_rate)
+Short_rate_parameters <- parameter_estimator(Short_rate,1)
+
+pred_r <- Rate_process(Short_rate[1],Short_rate_parameters[1], 
+                            mean(Short_rate),Short_rate_parameters[3],
+                            0.494401826690166,1,70)
+#converting short-rate into long rate (from linear formula l=ar+b)
+pred_l <- 0.0330282849263015 + 0.70155531854269*pred_r
+
+#plotting fitted curve to actual data
+plot(Long_rate~data$Year,col="blue", type="l", 
+     main="Real vs Fitted Long-term Interest Rates", xlab="Year", ylab="Interes Rate")
+lines(pred_l~data$Year,col="red")
+
+```
+  
+Once again, just like inflation apart from times of recessions(mainly energy crisis/Iraq and post dot-com bubble) the model generally captures the movement of the long term interest rates and can be used for long-term applications.  
+  
+\newpage  
+  
+```{r include=FALSE}
+#dividend process
+Dividend_process <- function(d0,k_d,t_d,s_d,rho_qd,dt,Nsteps){
+  set.seed(1)
+  Z_q <- rnorm(Nsteps,0,1)
+  Z_d <- rho_qd*Z_q + sqrt(1-rho_qd^2)*rnorm(Nsteps,0,1)
+  d <- numeric()
+  d[1] <- d0
+  for(i in 1:Nsteps){
+    d[i+1] <- d[i] + k_d*(t_d - d[i])*dt + 0.5*s_d*sqrt(dt)*Z_d[i]
+  }
+  return(d)
+}
+```
+  
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Real vs Fitted Dividend Yields(Blue: Real, Red:Predicted)"}
+#Estimating parameters for Dividend Process
+#dt=1 for annual observations, theta=mean(Dividend_Yield)
+dividend_parameters <- parameter_estimator(Dividend_yield,1)
+pred_d <- Dividend_process(Dividend_yield[1],dividend_parameters[1], 
+                            mean(Dividend_yield),dividend_parameters[3], 
+                           0.27700643,1,70)
+
+#plotting fitted curve to actual data
+plot(Dividend_yield~data$Year,col="blue", type="l", 
+     main="Real vs Fitted Dividend Yields", xlab="Year", ylab="Dividend Yield")
+lines(pred_d~data$Year,col="red")
+```
+  
+As we can see, the dividend yields also follow the same trend as they may miss certain outliers but do maintain the general shape of the curve.
+  
+\newpage  
+  
+For our equity yield process, we have taken, $\mu_1=0.105486,\mu_2=-0.03704,\sigma_1=0.07331,\sigma_2=0.14663,\;and\;\mathbb{P}_{1,2}=\mathbb{P}_{2,1}=2/7$.  
+```{r include=FALSE}
+Equity_process <- function(y0,dt,Nsteps){
+  y<-numeric()
+  x <- numeric()
+  y[1] <- y0
+  x[1] <- y[1]-pred_r[1]-pred_q[1]
+  s0 <- 1 
+  st <- function(i) sample(1:2,1,prob = c(5/7,2/7))
+
+  s <- st(s0)
+  for(i in 2:(Nsteps+1)) {
+    s <- c(s,st(s[i-1]))
+    if(s[i]==1){
+      x[i] <- 0.105486046 + 0.07731289*rnorm(1,0,1)
+    }else{
+      x[i] <- -0.037041821 + 0.14663041*rnorm(1,0,1)
+    }
+    y[i] <- pred_q[i]+pred_r[i]+x[i]
+  }
+  
+  return(y)
+}
+```
+  
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Real vs Fitted Equity Yields(Blue: Real, Red:Predicted)"}
+#dt=1 for annual observations
+pred_y <- Equity_process(Equity_yield[1],1,70)
+
+#plotting fitted curve to actual data
+plot(Equity_yield~data$Year,col="blue", type="l", 
+     main="Real vs Fitted Equity Yields", xlab="Year", ylab="Equity Yield")
+lines(pred_y~data$Year,col="red")
+```
+  
+Which as we can see is able to predict the movement very closely for equity yields.  
+  
+\newpage  
+  
+# Out-of-Sample performace  
+  
+To see out of model performance and validity of our model, we have imputed our data from 1946-2009, and have tried to compare the results from the predicted values vs real data between 2010 and 2016.  
+  
+We calculated 90% and 95% confidence interval levels and shown it here against the actual values.  
+  
+```{r include=FALSE}
+inflation_parameters <- parameter_estimator(Inflation[1:64],1)
+pred_q <- inflation_process(Inflation[64],inflation_parameters[1], 
+                            mean(Inflation[1:64]),inflation_parameters[3],1,7)
+
+Short_rate_parameters <- parameter_estimator(Short_rate[1:64],1)
+pred_r <- Rate_process(Short_rate[64],Short_rate_parameters[1], 
+                            mean(Short_rate[1:64]),Short_rate_parameters[3],
+                            0.494401826690166,1,7)
+pred_l <- 0.0330282849263015 + 0.70155531854269*pred_r
+
+dividend_parameters <- parameter_estimator(Dividend_yield[1:64],1)
+pred_d <- Dividend_process(Dividend_yield[64],dividend_parameters[1], 
+                            mean(Dividend_yield[1:64]),dividend_parameters[3], 
+                           0.27700643,1,7)
+
+pred_y <- Equity_process(Equity_yield[64],1,7)
+```
+  
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Out-of-sample performance of ESG"}
+par(mfrow=c(2,2))
+
+plot(Inflation[64:71]~data$Year[64:71],col="blue", type="l", 
+     main="Real vs Fitted Inflation", xlab="Year", ylab="Inflation", 
+     ylim=c(0,0.06))
+lines(pred_q~data$Year[64:71],col="red")
+
+plot(Long_rate[64:71]~data$Year[64:71],col="blue", type="l", 
+     main="Real vs Fitted Long-term Interest Rates", xlab="Year", 
+     ylab="Interes Rate", ylim=c(0.03,0.07))
+lines(pred_l~data$Year[64:71],col="red")
+
+plot(Dividend_yield[64:71]~data$Year[64:71],col="blue", type="l", 
+     main="Real vs Fitted Dividend Yields", xlab="Year", ylab="Dividend Yield", 
+     ylim=c(0.018,0.045))
+lines(pred_d~data$Year[64:71],col="red")
+
+plot(Equity_yield[64:71]~data$Year[64:71],col="blue", type="l", 
+     main="Real vs Fitted Equity Yields", xlab="Year", ylab="Equity Yield")
+lines(pred_y~data$Year[64:71],col="red")
+```
+  
+\newpage  
+  
+Apart from this, we can also see 95% confidence intervals for our forecasts and see whether the out-of-sample data is between those limits or not.
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.cap="95% CI for Inflation forecast", fig.align='left'}
+inflation_process_ci <- function(q0,k_q,t_q,s_q,dt,Nsteps){
+  set.seed(1)
+  q_l <- numeric()
+  q_u <- numeric()
+  Z_q <- rnorm(Nsteps,0,1)
+  q_l[1] <- q0
+  q_u[1] <- q0
+  for(i in 1:Nsteps){
+    q_l[i+1] <- q_l[i] + k_q*(t_q - q_l[i])*dt + 0.5*s_q*sqrt(dt)*-1.96
+    q_u[i+1] <- q_u[i] + k_q*(t_q - q_u[i])*dt + 0.5*s_q*sqrt(dt)*+1.96
+  }
+  return(as.data.frame(cbind(q_l,q_u)))
+}
+
+inflation_parameters <- parameter_estimator(Inflation[1:64],1)
+pred_q <- inflation_process_ci(Inflation[64],inflation_parameters[1], 
+                            mean(Inflation[1:64]),inflation_parameters[3],1,7)
+plot(Inflation~data$Year,col="blue", type="l", 
+     main="95% CI for Inflation forecast", xlab="Year", ylab="Inflation", 
+     ylim=c(-0.05,0.17))
+lines(pred_q$q_l~data$Year[64:71],col="red", lty=3, lwd=2)
+lines(pred_q$q_u~data$Year[64:71],col="red", lty=3, lwd=2)
+```
+  
+\newpage  
+  
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.cap="95% CI for Long-term interest rate forecast"}
+Rate_process_ci <- function(r0,k_r,t_r,s_r,rho_qr,dt,Nsteps){
+  set.seed(1)
+  Z_q <- rnorm(Nsteps,0,1)
+  Z_r <- rho_qr*Z_q + sqrt(1-rho_qr^2)*rnorm(Nsteps,0,1)
+  r_l <- numeric()
+  r_u <- numeric()
+  r_l[1] <- r0
+  r_u[1] <- r0
+  for(i in 1:Nsteps){
+    r_l[i+1] <- r_l[i] + k_r*(t_r - r_l[i])*dt + 0.5*s_r*sqrt(dt)*-1.96
+    r_u[i+1] <- r_u[i] + k_r*(t_r - r_u[i])*dt + 0.5*s_r*sqrt(dt)*+1.96
+  }
+  return(as.data.frame(cbind(r_l,r_u)))
+}
+
+Short_rate_parameters <- parameter_estimator(Short_rate[1:64],1)
+pred_r <- Rate_process_ci(Short_rate[64],Short_rate_parameters[1], 
+                            mean(Short_rate[1:64]),Short_rate_parameters[3],
+                            0.494401826690166,1,7)
+pred_l <- 0.0330282849263015 + 0.70155531854269*pred_r
+
+plot(Long_rate~data$Year,col="blue", type="l", 
+     main="95% CI for Long-term Interest rate forecast", xlab="Year", 
+     ylab="Inflation", ylim=c(-0.02,0.16))
+lines(pred_l$r_l~data$Year[64:71],col="red", lty=3, lwd=2)
+lines(pred_l$r_u~data$Year[64:71],col="red", lty=3, lwd=2)
+```
+  
+\newpage  
+  
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.cap="95% CI for Dividend Yield forecast"}
+Dividend_process_ci <- function(d0,k_d,t_d,s_d,rho_qd,dt,Nsteps){
+  set.seed(1)
+  Z_q <- rnorm(Nsteps,0,1)
+  Z_d <- rho_qd*Z_q + sqrt(1-rho_qd^2)*rnorm(Nsteps,0,1)
+  d_l <- numeric()
+  d_u <- numeric()
+  d_l[1] <- d0
+  d_u[1] <- d0
+  for(i in 1:Nsteps){
+    d_l[i+1] <- d_l[i] + k_d*(t_d - d_l[i])*dt + 0.5*s_d*sqrt(dt)*-1.96
+    d_u[i+1] <- d_u[i] + k_d*(t_d - d_u[i])*dt + 0.5*s_d*sqrt(dt)*+1.96
+  }
+  return(as.data.frame(cbind(d_l,d_u)))
+}
+
+dividend_parameters <- parameter_estimator(Dividend_yield[1:64],1)
+pred_d <- Dividend_process_ci(Dividend_yield[64],dividend_parameters[1], 
+                            mean(Dividend_yield[1:64]),dividend_parameters[3], 
+                           0.27700643,1,7)
+
+plot(Dividend_yield~data$Year,main="95% CI Dividend Yields Forecast", 
+     type="l", col="blue", xlab="Year", ylab="Dividend Yield", 
+     ylim=c(-0.03,0.11))
+lines(pred_d$d_l~data$Year[64:71],col="red", lty=3,lwd=2)
+lines(pred_d$d_u~data$Year[64:71],col="red", lty=3,lwd=2)
+```
+  
+\newpage  
+  
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.cap="95% CI for Equity Yield forecast"}
+Equity_process_ci <- function(y0,dt,Nsteps){
+  y_l <-numeric()
+  y_u <-numeric()
+  x_l <- numeric()
+  x_u <- numeric()
+  y_l[1] <- y0
+  y_u[1] <- y0
+  x_l[1] <- y_l[1]-pred_r$r_l[1]-pred_q$q_l[1]
+  x_l[1] <- y_u[1]-pred_r$r_u[1]-pred_q$q_u[1]
+  s0 <- 1 
+  st <- function(i) sample(1:2,1,prob = c(5/7,2/7))
+
+  s <- st(s0)
+  for(i in 2:(Nsteps+1)) {
+    s <- c(s,st(s[i-1]))
+    if(s[i]==1){
+      x_l[i] <- 0.105486046 + 0.07731289*-1.96
+      x_u[i] <- 0.105486046 + 0.07731289*+1.96
+    }else{
+      x_l[i] <- -0.037041821 + 0.14663041*-1.96
+      x_u[i] <- -0.037041821 + 0.14663041*+1.96
+    }
+    y_l[i] <- pred_q$q_l[i]+pred_r$r_l[i]+x_l[i]
+    y_u[i] <- pred_q$q_u[i]+pred_r$r_u[i]+x_u[i]
+  }
+  
+  return(as.data.frame(cbind(y_l,y_u)))
+}
+
+pred_y <- Equity_process_ci(Equity_yield[64],1,7)
+
+plot(Equity_yield~data$Year,col="blue", type="l", 
+     main="95% CI for Equity Yield forecast", xlab="Year", ylab="Equity Yield", 
+     ylim=c(-0.5,0.5))
+lines(pred_y$y_l~data$Year[64:71],col="red", lty=3, lwd=2)
+lines(pred_y$y_u~data$Year[64:71],col="red", lty=3, lwd=2)
+```
+  
+\newpage  
+  
+# Conclusion  
+  
+As we can see from the the 95% confidence intervals, the ESG can simulate a wide variety of events encompassing all unlikely and unexpected yet plausible scenarios.  
+  
+Given enough number of simulations of this ESG, it should allow the end user to stress test their portfolios as well as generate insights regarding the future of crucial economic variables.  
+  
+***  
+
+```{r include=FALSE}
+sessionInfo()
+```
+  
+***
